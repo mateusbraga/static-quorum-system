@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mateusbraga/freestore/pkg/view"
+	"github.com/mateusbraga/static-quorum-system/pkg/view"
 )
 
 const commLinkRepairPeriod = 20 * time.Second
@@ -49,6 +49,15 @@ func getCommLink(process view.Process) communicationLink {
 	return commLink
 }
 
+func setCommLinkFaulty(process view.Process) {
+	commLinkTableMu.Lock()
+	defer commLinkTableMu.Unlock()
+
+	commLink := commLinkTable[process]
+	commLink.rpcClient = nil
+	commLinkTable[process] = commLink
+}
+
 func SendRPCRequest(process view.Process, serviceMethod string, arg interface{}, result interface{}) error {
 	commLink := getCommLink(process)
 	if commLink.isFaulty() {
@@ -57,7 +66,7 @@ func SendRPCRequest(process view.Process, serviceMethod string, arg interface{},
 
 	err := commLink.rpcClient.Call(serviceMethod, arg, result)
 	if err != nil {
-		commLink.rpcClient = nil
+		setCommLinkFaulty(commLink.Process)
 		repairLinkChan <- commLink
 		return errors.New(fmt.Sprintf("sendRPCRequest to process %v failed: %v", commLink.Process, err))
 	}

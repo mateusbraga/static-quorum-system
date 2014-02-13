@@ -8,7 +8,7 @@ import (
 func (v *View) GobEncode() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	encoder := gob.NewEncoder(buf)
-	err := encoder.Encode(&v.entries)
+	err := encoder.Encode(&v.members)
 	if err != nil {
 		return nil, err
 	}
@@ -18,22 +18,9 @@ func (v *View) GobEncode() ([]byte, error) {
 func (v *View) GobDecode(b []byte) error {
 	buf := bytes.NewReader(b)
 	decoder := gob.NewDecoder(buf)
-	err := decoder.Decode(&v.entries)
+	err := decoder.Decode(&v.members)
 	if err != nil {
 		return err
-	}
-
-	v.members = make(map[Process]bool)
-
-	for u, _ := range v.entries {
-		switch u.Type {
-		case Join:
-			if !v.entries[Update{Leave, u.Process}] {
-				v.members[u.Process] = true
-			}
-		case Leave:
-			delete(v.members, u.Process)
-		}
 	}
 
 	return nil

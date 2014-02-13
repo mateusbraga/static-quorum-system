@@ -1,4 +1,4 @@
-// Freestore_measures is a client that measures latency and throughput of freestore.
+// Freestore_measures is a client that measures latency and throughput of static-quorum-system.
 package main
 
 import (
@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mateusbraga/freestore/pkg/client"
-	"github.com/mateusbraga/freestore/pkg/view"
 	"github.com/mateusbraga/gostat"
+	"github.com/mateusbraga/static-quorum-system/pkg/client"
+	"github.com/mateusbraga/static-quorum-system/pkg/view"
 )
 
 var (
@@ -25,14 +25,14 @@ var (
 	measureLatency     = flag.Bool("latency", false, "Client will measure latency")
 	measureThroughput  = flag.Bool("throughput", false, "Client will measure throughput")
 	totalDuration      = flag.Duration("duration", 10*time.Second, "Duration to run operations (throughput measurement)")
-	resultFile         = flag.String("o", "/proj/freestore/results.txt", "Result file filename")
+	resultFile         = flag.String("o", "/proj/freestore/results_static.txt", "Result file filename")
 )
 
 var (
-	latencies       []int64
-	ops             int
-	stopChan        <-chan time.Time
-	freestoreClient *client.Client
+	latencies    []int64
+	ops          int
+	stopChan     <-chan time.Time
+	systemClient *client.Client
 )
 
 func init() {
@@ -40,7 +40,7 @@ func init() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	initialView := getInitialView()
-	freestoreClient = client.New(initialView)
+	systemClient = client.New(initialView)
 }
 
 func main() {
@@ -71,7 +71,7 @@ func latencyAndThroughput() {
 	if *isWrite {
 		for ops = 0; ops < *numberOfOperations; ops++ {
 			timeBefore := time.Now()
-			err := freestoreClient.Write(data)
+			err := systemClient.Write(data)
 			timeAfter := time.Now()
 			if err != nil {
 				log.Fatalln(err)
@@ -80,14 +80,14 @@ func latencyAndThroughput() {
 			latencies = append(latencies, timeAfter.Sub(timeBefore).Nanoseconds())
 		}
 	} else {
-		err := freestoreClient.Write(data)
+		err := systemClient.Write(data)
 		if err != nil {
 			log.Fatalln("ERROR initial write:", err)
 		}
 
 		for ops = 0; ops < *numberOfOperations; ops++ {
 			timeBefore := time.Now()
-			_, err = freestoreClient.Read()
+			_, err = systemClient.Read()
 			timeAfter := time.Now()
 			if err != nil {
 				log.Fatalln(err)
@@ -148,7 +148,7 @@ func latency() {
 	if *isWrite {
 		for ops = 0; ops < *numberOfOperations; ops++ {
 			timeBefore := time.Now()
-			err := freestoreClient.Write(data)
+			err := systemClient.Write(data)
 			timeAfter := time.Now()
 			if err != nil {
 				log.Fatalln(err)
@@ -157,14 +157,14 @@ func latency() {
 			latencies = append(latencies, timeAfter.Sub(timeBefore).Nanoseconds())
 		}
 	} else {
-		err := freestoreClient.Write(data)
+		err := systemClient.Write(data)
 		if err != nil {
 			log.Fatalln("Initial write:", err)
 		}
 
 		for ops = 0; ops < *numberOfOperations; ops++ {
 			timeBefore := time.Now()
-			_, err = freestoreClient.Read()
+			_, err = systemClient.Read()
 			timeAfter := time.Now()
 			if err != nil {
 				log.Fatalln(err)
@@ -196,7 +196,7 @@ func throughput() {
 
 	if *isWrite {
 		for ; ; ops++ {
-			err := freestoreClient.Write(data)
+			err := systemClient.Write(data)
 			if err != nil {
 				log.Fatalln(err)
 			}
@@ -208,13 +208,13 @@ func throughput() {
 			}
 		}
 	} else {
-		err := freestoreClient.Write(data)
+		err := systemClient.Write(data)
 		if err != nil {
 			log.Fatalln("Initial write:", err)
 		}
 
 		for ; ; ops++ {
-			_, err = freestoreClient.Read()
+			_, err = systemClient.Read()
 			if err != nil {
 				log.Fatalln(err)
 			}
@@ -250,17 +250,17 @@ func getInitialView() *view.View {
 		log.Fatalln(err)
 	}
 
-	var process view.Process
+	var processes []view.Process
 	switch {
 	case strings.Contains(hostname, "node-"): // emulab.net
-		process = view.Process{"10.1.1.2:5000"}
+		processes = append(processes, view.Process{"10.1.1.2:5000"})
+		processes = append(processes, view.Process{"10.1.1.3:5000"})
+		processes = append(processes, view.Process{"10.1.1.4:5000"})
 	default:
-		process = view.Process{"[::]:5000"}
+		processes = append(processes, view.Process{"[::]:5000"})
+		processes = append(processes, view.Process{"[::]:5001"})
+		processes = append(processes, view.Process{"[::]:5002"})
 	}
 
-	initialView, err := client.GetCurrentView(process)
-	if err != nil {
-		log.Fatalln("Failed to get current view of process %v: %v\n", process, err)
-	}
-	return initialView
+	return view.NewWithProcesses(processes...)
 }

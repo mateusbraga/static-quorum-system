@@ -4,15 +4,15 @@ import (
 	"errors"
 	"log"
 
-	"github.com/mateusbraga/freestore/pkg/comm"
-	"github.com/mateusbraga/freestore/pkg/view"
+	"github.com/mateusbraga/static-quorum-system/pkg/comm"
+	"github.com/mateusbraga/static-quorum-system/pkg/view"
 )
 
 // diffResultsErr is returned by readQuorum if not all answers from the servers were the same. Returned to indicate that Read() should do 2nd phase of the read protocol.
 var diffResultsErr = errors.New("Read Divergence")
 
 // readQuorum asks for the register value from all members of the view, returning the most recent one after it receives answers from a majority.
-// If the view needs to be updated, it will return a *view.OldViewError.  If values returned by the processes differ, it will return diffResultsErr.
+// If values returned by the processes differ, it will return diffResultsErr.
 func readQuorum(destinationView *view.View) (RegisterMsg, error) {
 	// Send write request to all
 	resultChan := make(chan RegisterMsg, destinationView.N())
@@ -54,10 +54,6 @@ func readQuorum(destinationView *view.View) (RegisterMsg, error) {
 		receivedValue := <-resultChan
 
 		if receivedValue.Err != nil {
-			if oldViewError, ok := receivedValue.Err.(*view.OldViewError); ok {
-				return RegisterMsg{}, oldViewError
-			}
-
 			ok := countError(receivedValue.Err)
 			if !ok {
 				return RegisterMsg{}, errors.New("Failed to get read quorun")
@@ -80,7 +76,6 @@ func readQuorum(destinationView *view.View) (RegisterMsg, error) {
 }
 
 // writeQuorum tries to write the value in writeMsg to the register of all processes on the view, returning when it gets confirmation from a majority.
-// If the view needs to be updated, it will return the new view in a *view.OldViewError.
 func writeQuorum(destinationView *view.View, writeMsg RegisterMsg) error {
 	// Send write request to all
 	resultChan := make(chan RegisterMsg, destinationView.N())
@@ -116,10 +111,6 @@ func writeQuorum(destinationView *view.View, writeMsg RegisterMsg) error {
 		receivedValue := <-resultChan
 
 		if receivedValue.Err != nil {
-			if oldViewError, ok := receivedValue.Err.(*view.OldViewError); ok {
-				return oldViewError
-			}
-
 			ok := countError(receivedValue.Err)
 			if !ok {
 				return errors.New("Failed to get write quorun")

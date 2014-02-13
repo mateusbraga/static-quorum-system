@@ -1,5 +1,5 @@
 /*
-Freestore_client is a sample implementation of a freestore client.
+static-quorum-system-client is a sample implementation of a static-quorum-system client.
 */
 package main
 
@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mateusbraga/freestore/pkg/client"
-	"github.com/mateusbraga/freestore/pkg/view"
+	"github.com/mateusbraga/static-quorum-system/pkg/client"
+	"github.com/mateusbraga/static-quorum-system/pkg/view"
 )
 
 var (
@@ -24,20 +24,20 @@ func main() {
 	flag.Parse()
 
 	initialView := getInitialView()
-	freestoreClient := client.New(initialView)
+	quorumClient := client.New(initialView)
 
 	var finalValue interface{}
 	var err error
 	for i := uint64(0); i < *nTotal; i++ {
 		startRead := time.Now()
-		finalValue, err = freestoreClient.Read()
+		finalValue, err = quorumClient.Read()
 		endRead := time.Now()
 		if err != nil {
 			log.Fatalln(err)
 		}
 
 		startWrite := time.Now()
-		err = freestoreClient.Write(finalValue)
+		err = quorumClient.Write(finalValue)
 		endWrite := time.Now()
 		if err != nil {
 			log.Fatalln(err)
@@ -57,17 +57,17 @@ func getInitialView() *view.View {
 		log.Fatalln(err)
 	}
 
-	var process view.Process
+	var processes []view.Process
 	switch {
 	case strings.Contains(hostname, "node-"): // emulab.net
-		process = view.Process{"10.1.1.2:5000"}
+		processes = append(processes, view.Process{"10.1.1.2:5000"})
+		processes = append(processes, view.Process{"10.1.1.3:5000"})
+		processes = append(processes, view.Process{"10.1.1.4:5000"})
 	default:
-		process = view.Process{"[::]:5000"}
+		processes = append(processes, view.Process{"[::]:5000"})
+		processes = append(processes, view.Process{"[::]:5001"})
+		processes = append(processes, view.Process{"[::]:5002"})
 	}
 
-	initialView, err := client.GetCurrentView(process)
-	if err != nil {
-		log.Fatalf("Failed to get current view of process %v: %v\n", process, err)
-	}
-	return initialView
+	return view.NewWithProcesses(processes...)
 }

@@ -1,11 +1,2 @@
-server/server
-client/client
-controller/controller
-
 *.test
-*.db
 coverage.out
-
-samples/client/client
-samples/server/server
-cmd/freestore_client/freestore_client

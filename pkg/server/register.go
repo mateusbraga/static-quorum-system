@@ -1,14 +1,10 @@
-// +build !staticRegister
-
-//TODO make it a key value storage
 package server
 
 import (
-	"log"
 	"net/rpc"
 	"sync"
 
-	"github.com/mateusbraga/freestore/pkg/view"
+	"github.com/mateusbraga/static-quorum-system/pkg/view"
 )
 
 var register Value
@@ -17,11 +13,6 @@ var register Value
 type ClientRequest int
 
 func (r *ClientRequest) Read(clientView *view.View, reply *Value) error {
-	if !clientView.Equal(currentView.View()) {
-		reply.Err = view.OldViewError{NewView: currentView.View()}
-		return nil
-	}
-
 	register.mu.RLock()
 	defer register.mu.RUnlock()
 
@@ -32,11 +23,6 @@ func (r *ClientRequest) Read(clientView *view.View, reply *Value) error {
 }
 
 func (r *ClientRequest) Write(value Value, reply *Value) error {
-	if !value.View.Equal(currentView.View()) {
-		reply.Err = view.OldViewError{NewView: currentView.View()}
-		return nil
-	}
-
 	register.mu.Lock()
 	defer register.mu.Unlock()
 
@@ -49,15 +35,8 @@ func (r *ClientRequest) Write(value Value, reply *Value) error {
 	return nil
 }
 
-func (r *ClientRequest) GetCurrentView(value int, reply *view.View) error {
-	*reply = *currentView.View()
-	log.Println("Done GetCurrentView request")
-	return nil
-}
-
 // --------- Init ---------
 func init() {
-	register.mu.Lock() // The register starts locked
 	register.Value = nil
 	register.Timestamp = 0
 }
@@ -70,9 +49,6 @@ func init() {
 type Value struct {
 	Value     interface{}
 	Timestamp int
-
-	View *view.View
-	Err  error
 
 	mu sync.RWMutex
 }
