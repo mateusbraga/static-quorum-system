@@ -16,19 +16,19 @@ func (thisProcess Process) Less(otherProcess Process) bool {
 // -------- View type -----------
 
 type View struct {
-	members map[Process]bool
+	Members map[Process]bool
 }
 
 func newView() *View {
 	v := View{}
-	v.members = make(map[Process]bool)
+	v.Members = make(map[Process]bool)
 	return &v
 }
 
 func NewWithProcesses(processes ...Process) *View {
 	v := newView()
 	for _, process := range processes {
-		v.members[process] = true
+		v.Members[process] = true
 	}
 	return v
 }
@@ -38,7 +38,7 @@ func (v *View) String() string {
 	fmt.Fprintf(&b, "{")
 
 	first := true
-	for process, _ := range v.members {
+	for process, _ := range v.Members {
 		if !first {
 			fmt.Fprintf(&b, ", ")
 		}
@@ -51,12 +51,12 @@ func (v *View) String() string {
 }
 
 func (v *View) HasMember(p Process) bool {
-	return v.members[p]
+	return v.Members[p]
 }
 
 func (v *View) GetMembers() []Process {
 	var members []Process
-	for process, _ := range v.members {
+	for process, _ := range v.Members {
 		members = append(members, process)
 	}
 	return members
@@ -67,15 +67,15 @@ func (v *View) QuorumSize() int {
 }
 
 func (v *View) quorumSize() int {
-	membersTotal := len(v.members)
+	membersTotal := len(v.Members)
 	return (membersTotal+1)/2 + (membersTotal+1)%2
 }
 
 func (v *View) N() int {
-	return len(v.members)
+	return len(v.Members)
 }
 
 func (v *View) F() int {
-	membersTotal := len(v.members)
+	membersTotal := len(v.Members)
 	return membersTotal - v.quorumSize()
 }
