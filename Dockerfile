@@ -1,4 +1,4 @@
-# Freestore
+# static-quorum-system
 #
 # Version 1
 

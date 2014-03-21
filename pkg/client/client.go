@@ -10,24 +10,41 @@ import (
 )
 
 type Client struct {
-	view *view.View
+	view                view.CurrentView
+	getFurtherViewsFunc GetViewFunc
 }
+
+type GetViewFunc func() (*view.View, error)
 
 // New returns a new Client with initialView.
-func New(initialView *view.View) *Client {
-	return &Client{initialView}
-}
+func New(getInitialViewFunc GetViewFunc, getFurtherViewsFunc GetViewFunc) (*Client, error) {
+	newClient := &Client{}
+	newClient.view = view.NewCurrentView()
 
-func (thisClient Client) View() *view.View {
-	return thisClient.view
-}
-
-// Write v to the system's register.
-func (thisClient *Client) Write(v interface{}) error {
-	readValue, err := readQuorum(thisClient.View())
+	initialView, err := getInitialViewFunc()
 	if err != nil {
-		// Special cases:
-		//  diffResultsErr: can be ignored
+		return nil, err
+	}
+
+	newClient.view.Update(initialView)
+
+	newClient.getFurtherViewsFunc = getFurtherViewsFunc
+
+	return newClient, nil
+}
+
+func (cl Client) View() *view.View      { return cl.view.View() }
+func (cl Client) ViewRef() view.ViewRef { return cl.view.ViewRef() }
+func (cl Client) ViewAndViewRef() (*view.View, view.ViewRef) {
+	return cl.view.ViewAndViewRef()
+}
+func (cl *Client) updateCurrentView(newView *view.View) { cl.view.Update(newView) }
+
+// Write v to the system's register. Can be run concurrently.
+func (cl *Client) Write(v interface{}) error {
+	readValue, err := cl.readQuorum()
+	if err != nil {
+		// Special case: diffResultsErr
 		if err == diffResultsErr {
 			// Do nothing - we will write a new value anyway
 		} else {
@@ -37,9 +54,10 @@ func (thisClient *Client) Write(v interface{}) error {
 
 	writeMsg := RegisterMsg{}
 	writeMsg.Value = v
+	//TODO append writer id to timestamp
 	writeMsg.Timestamp = readValue.Timestamp + 1
 
-	err = writeQuorum(thisClient.View(), writeMsg)
+	err = cl.writeQuorum(writeMsg)
 	if err != nil {
 		return err
 	}
@@ -48,32 +66,32 @@ func (thisClient *Client) Write(v interface{}) error {
 }
 
 // Read executes the quorum read protocol.
-func (thisClient *Client) Read() (interface{}, error) {
-	readMsg, err := readQuorum(thisClient.View())
+func (cl *Client) Read() (interface{}, error) {
+	readMsg, err := cl.readQuorum()
 	if err != nil {
-		// Expected: diffResultsErr (will write most current value to view).
+		// Special case: diffResultsErr
 		if err == diffResultsErr {
 			log.Println("Found divergence: Going to 2nd phase of read protocol")
-			return thisClient.read2ndPhase(thisClient.View(), readMsg)
+			return cl.read2ndPhase(readMsg)
 		} else {
-			return 0, err
+			return nil, err
 		}
 	}
 
 	return readMsg.Value, nil
 }
 
-func (thisClient *Client) read2ndPhase(destinationView *view.View, readMsg RegisterMsg) (interface{}, error) {
-	err := writeQuorum(destinationView, readMsg)
+func (cl *Client) read2ndPhase(readMsg RegisterMsg) (interface{}, error) {
+	err := cl.writeQuorum(readMsg)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
+
 	return readMsg.Value, nil
 }
 
 type RegisterMsg struct {
 	Value     interface{} // Value of the register
 	Timestamp int         // Timestamp of the register
-
-	Err error
+	Err       error       // Any RPC or register service errors
 }

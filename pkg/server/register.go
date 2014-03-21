@@ -1,6 +1,9 @@
+//TODO make it a key value storage
+
 package server
 
 import (
+	"log"
 	"net/rpc"
 	"sync"
 
@@ -10,9 +13,10 @@ import (
 var register Value
 
 //  ---------- RPC Requests -------------
-type ClientRequest int
 
-func (r *ClientRequest) Read(clientView *view.View, reply *Value) error {
+type RegisterService int
+
+func (r *RegisterService) Read(clientViewRef view.ViewRef, reply *Value) error {
 	register.mu.RLock()
 	defer register.mu.RUnlock()
 
@@ -22,7 +26,7 @@ func (r *ClientRequest) Read(clientView *view.View, reply *Value) error {
 	return nil
 }
 
-func (r *ClientRequest) Write(value Value, reply *Value) error {
+func (r *RegisterService) Write(value Value, reply *Value) error {
 	register.mu.Lock()
 	defer register.mu.Unlock()
 
@@ -35,20 +39,28 @@ func (r *ClientRequest) Write(value Value, reply *Value) error {
 	return nil
 }
 
+func (r *RegisterService) GetCurrentView(value int, reply *view.View) error {
+	*reply = *currentView.View()
+	log.Println("Done GetCurrentView request")
+	return nil
+}
+
 // --------- Init ---------
+
 func init() {
+	register.mu.Lock() // The register starts locked
 	register.Value = nil
 	register.Timestamp = 0
 }
 
 func init() {
-	rpc.Register(new(ClientRequest))
+	rpc.Register(new(RegisterService))
 }
 
 // --------- Types ---------
+
 type Value struct {
 	Value     interface{}
 	Timestamp int
-
-	mu sync.RWMutex
+	mu        sync.RWMutex
 }

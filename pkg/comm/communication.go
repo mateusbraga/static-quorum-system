@@ -6,22 +6,17 @@ import (
 	"log"
 	"net/rpc"
 	"sync"
-	"time"
 
 	"github.com/mateusbraga/static-quorum-system/pkg/view"
 )
 
-const commLinkRepairPeriod = 20 * time.Second
-
 var (
 	commLinkTable   = make(map[view.Process]communicationLink)
 	commLinkTableMu sync.Mutex
-
-	repairLinkChan = make(chan communicationLink)
 )
 
 type communicationLink struct {
-	Process   view.Process
+	process   view.Process
 	rpcClient *rpc.Client
 }
 
@@ -35,10 +30,11 @@ func getCommLink(process view.Process) communicationLink {
 
 	commLink, ok := commLinkTable[process]
 	if !ok {
-		commLink = communicationLink{Process: process}
+		commLink = communicationLink{process: process}
 
 		newRpcClient, err := rpc.Dial("tcp", process.Addr)
 		if err != nil {
+			newRpcClient = nil
 			repairLinkChan <- commLink
 		}
 		commLink.rpcClient = newRpcClient
@@ -56,26 +52,38 @@ func setCommLinkFaulty(process view.Process) {
 	commLink := commLinkTable[process]
 	commLink.rpcClient = nil
 	commLinkTable[process] = commLink
+
+	repairLinkChan <- commLink
 }
 
+func deleteCommLink(process view.Process) {
+	commLinkTableMu.Lock()
+	defer commLinkTableMu.Unlock()
+
+	delete(commLinkTable, process)
+}
+
+// SendRPCRequest invokes serviceMethod at process with arg and puts the result at result. Any communication error that occurs is returned.
 func SendRPCRequest(process view.Process, serviceMethod string, arg interface{}, result interface{}) error {
 	commLink := getCommLink(process)
 	if commLink.isFaulty() {
-		return errors.New(fmt.Sprintf("process %v is unreachable", process))
+		return errors.New(fmt.Sprintf("SendRPCRequest: Process %v is currently unreachable", process))
 	}
 
 	err := commLink.rpcClient.Call(serviceMethod, arg, result)
 	if err != nil {
-		setCommLinkFaulty(commLink.Process)
-		repairLinkChan <- commLink
-		return errors.New(fmt.Sprintf("sendRPCRequest to process %v failed: %v", commLink.Process, err))
+		setCommLinkFaulty(commLink.process)
+		return errors.New(fmt.Sprintf("SendRPCRequest: %v call to process %v failed: %v", serviceMethod, commLink.process, err))
 	}
 
 	return nil
 }
 
-func BroadcastRPCRequest(destinationView *view.View, serviceMethod string, arg interface{}) {
-	errorChan := make(chan error, destinationView.N())
+// BroadcastRPCRequest invokes serviceMethod at all members of the
+// destinationView with arg. It returns an error if it fails to receive
+// a response from a quorum of processes.
+func BroadcastRPCRequest(destinationView *view.View, serviceMethod string, arg interface{}) error {
+	errorChan := make(chan error, destinationView.NumberOfMembers())
 
 	for _, process := range destinationView.GetMembers() {
 		go func(process view.Process) {
@@ -88,66 +96,18 @@ func BroadcastRPCRequest(destinationView *view.View, serviceMethod string, arg i
 	successTotal := 0
 	for {
 		err := <-errorChan
+
 		if err != nil {
 			failedTotal++
-			if failedTotal > destinationView.F() {
-				log.Fatalf("Failed to send %v to a quorum\n", serviceMethod)
+			if failedTotal > destinationView.NumberOfToleratedFaults() {
+				log.Printf("WARN: BroadcastRPCRequest failed to send %v to a quorum\n", serviceMethod)
+				return err
+			}
+		} else {
+			successTotal++
+			if successTotal == destinationView.QuorumSize() {
+				return nil
 			}
 		}
-		successTotal++
-		if successTotal == destinationView.QuorumSize() {
-			return
-		}
 	}
-}
-
-func repairCommLinkFunc(process view.Process) error {
-	newRpcClient, err := rpc.Dial("tcp", process.Addr)
-	if err != nil {
-		return err
-	}
-
-	commLinkTableMu.Lock()
-	defer commLinkTableMu.Unlock()
-
-	commLink := commLinkTable[process]
-	commLink.rpcClient = newRpcClient
-	commLinkTable[process] = commLink
-	return nil
-}
-
-func repairCommLinkLoop() {
-	faultyCommLinks := make(map[view.Process]bool)
-	repairTicker := time.NewTicker(commLinkRepairPeriod)
-
-	for {
-		select {
-		case commLink := <-repairLinkChan:
-			err := repairCommLinkFunc(commLink.Process)
-			if err != nil {
-				log.Printf("Failed to repair communication link to process %v: %v\n", commLink.Process, err)
-				faultyCommLinks[commLink.Process] = true
-			}
-		case _ = <-repairTicker.C:
-			var repairedSucessfully []view.Process
-
-			for process, _ := range faultyCommLinks {
-				err := repairCommLinkFunc(process)
-				if err != nil {
-					log.Printf("Failed to repair communication link to process %v: %v\n", process, err)
-				}
-
-				repairedSucessfully = append(repairedSucessfully, process)
-			}
-
-			for _, process := range repairedSucessfully {
-				delete(faultyCommLinks, process)
-			}
-		}
-
-	}
-}
-
-func init() {
-	go repairCommLinkLoop()
 }

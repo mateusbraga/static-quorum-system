@@ -1,4 +1,4 @@
-// Freestore_measures is a client that measures latency and throughput of static-quorum-system.
+// static-quorum-system_measures is a client that measures latency and throughput of static-quorum-system.
 package main
 
 import (
@@ -25,26 +25,31 @@ var (
 	measureLatency     = flag.Bool("latency", false, "Client will measure latency")
 	measureThroughput  = flag.Bool("throughput", false, "Client will measure throughput")
 	totalDuration      = flag.Duration("duration", 10*time.Second, "Duration to run operations (throughput measurement)")
-	resultFile         = flag.String("o", "/proj/freestore/results_static.txt", "Result file filename")
+	resultFile         = flag.String("o", "/proj/freestore/results.txt", "Result file filename")
+	initialProcess     = flag.String("initial", "", "Process to ask for the initial view")
+	retryProcess       = flag.String("retry", "", "Process to ask for a newer view")
 )
 
 var (
-	latencies    []int64
-	ops          int
-	stopChan     <-chan time.Time
-	systemClient *client.Client
+	latencies []int64
+	ops       int
+	stopChan  <-chan time.Time
+	qsClient  *client.Client
 )
 
 func init() {
 	// Make it parallel
 	runtime.GOMAXPROCS(runtime.NumCPU())
-
-	initialView := getInitialView()
-	systemClient = client.New(initialView)
 }
 
 func main() {
 	flag.Parse()
+
+	var err error
+	qsClient, err = client.New(getInitialView, getFurtherViews)
+	if err != nil {
+		log.Fatalln("FATAL:", err)
+	}
 
 	stopChan = time.After(*totalDuration)
 
@@ -71,7 +76,7 @@ func latencyAndThroughput() {
 	if *isWrite {
 		for ops = 0; ops < *numberOfOperations; ops++ {
 			timeBefore := time.Now()
-			err := systemClient.Write(data)
+			err := qsClient.Write(data)
 			timeAfter := time.Now()
 			if err != nil {
 				log.Fatalln(err)
@@ -80,14 +85,14 @@ func latencyAndThroughput() {
 			latencies = append(latencies, timeAfter.Sub(timeBefore).Nanoseconds())
 		}
 	} else {
-		err := systemClient.Write(data)
+		err := qsClient.Write(data)
 		if err != nil {
 			log.Fatalln("ERROR initial write:", err)
 		}
 
 		for ops = 0; ops < *numberOfOperations; ops++ {
 			timeBefore := time.Now()
-			_, err = systemClient.Read()
+			_, err = qsClient.Read()
 			timeAfter := time.Now()
 			if err != nil {
 				log.Fatalln(err)
@@ -124,7 +129,8 @@ func saveResults(latenciesMean int64, latenciesStandardDeviation int64, opsPerSe
 
 	file, err := os.OpenFile(*resultFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
 	if err != nil {
-		log.Fatalln(err)
+		log.Println(err)
+		return
 	}
 	defer file.Close()
 
@@ -148,7 +154,7 @@ func latency() {
 	if *isWrite {
 		for ops = 0; ops < *numberOfOperations; ops++ {
 			timeBefore := time.Now()
-			err := systemClient.Write(data)
+			err := qsClient.Write(data)
 			timeAfter := time.Now()
 			if err != nil {
 				log.Fatalln(err)
@@ -157,14 +163,14 @@ func latency() {
 			latencies = append(latencies, timeAfter.Sub(timeBefore).Nanoseconds())
 		}
 	} else {
-		err := systemClient.Write(data)
+		err := qsClient.Write(data)
 		if err != nil {
 			log.Fatalln("Initial write:", err)
 		}
 
 		for ops = 0; ops < *numberOfOperations; ops++ {
 			timeBefore := time.Now()
-			_, err = systemClient.Read()
+			_, err = qsClient.Read()
 			timeAfter := time.Now()
 			if err != nil {
 				log.Fatalln(err)
@@ -196,7 +202,7 @@ func throughput() {
 
 	if *isWrite {
 		for ; ; ops++ {
-			err := systemClient.Write(data)
+			err := qsClient.Write(data)
 			if err != nil {
 				log.Fatalln(err)
 			}
@@ -208,13 +214,13 @@ func throughput() {
 			}
 		}
 	} else {
-		err := systemClient.Write(data)
+		err := qsClient.Write(data)
 		if err != nil {
 			log.Fatalln("Initial write:", err)
 		}
 
 		for ; ; ops++ {
-			_, err = systemClient.Read()
+			_, err = qsClient.Read()
 			if err != nil {
 				log.Fatalln(err)
 			}
@@ -244,23 +250,42 @@ func createFakeData() []byte {
 	return data
 }
 
-func getInitialView() *view.View {
+func getInitialView() (*view.View, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
-		log.Fatalln(err)
+		log.Panicln(err)
 	}
 
-	var processes []view.Process
-	switch {
-	case strings.Contains(hostname, "node-"): // emulab.net
-		processes = append(processes, view.Process{"10.1.1.2:5000"})
-		processes = append(processes, view.Process{"10.1.1.3:5000"})
-		processes = append(processes, view.Process{"10.1.1.4:5000"})
-	default:
-		processes = append(processes, view.Process{"[::]:5000"})
-		processes = append(processes, view.Process{"[::]:5001"})
-		processes = append(processes, view.Process{"[::]:5002"})
+	if *initialProcess == "" {
+		switch {
+		case strings.Contains(hostname, "node-"): // emulab.net
+			updates := []view.Update{view.Update{Type: view.Join, Process: view.Process{"10.1.1.2:5000"}},
+				view.Update{Type: view.Join, Process: view.Process{"10.1.1.3:5000"}},
+				view.Update{Type: view.Join, Process: view.Process{"10.1.1.4:5000"}},
+			}
+			return view.NewWithUpdates(updates...), nil
+		default:
+			updates := []view.Update{view.Update{Type: view.Join, Process: view.Process{"[::]:5000"}},
+				view.Update{Type: view.Join, Process: view.Process{"[::]:5001"}},
+				view.Update{Type: view.Join, Process: view.Process{"[::]:5002"}},
+			}
+			return view.NewWithUpdates(updates...), nil
+		}
+	} else {
+		process := view.Process{*initialProcess}
+		initialView, err := client.GetCurrentView(process)
+		if err != nil {
+			log.Fatalf("Failed to get current view from process %v: %v\n", process, err)
+		}
+		return initialView, nil
+	}
+}
+
+func getFurtherViews() (*view.View, error) {
+	view, err := client.GetCurrentView(view.Process{*retryProcess})
+	if err != nil {
+		return nil, err
 	}
 
-	return view.NewWithProcesses(processes...)
+	return view, nil
 }
